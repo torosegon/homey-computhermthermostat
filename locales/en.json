@@ -1,5 +1,18 @@
 {
   "error": {
-    "offline": "Your Thermostate went offline. Trying to reconnect..."
+    "offline": "Your Thermostate went offline. Trying to reconnect...",
+    "cool_not_supported": "This thermostat does not support cooling."
+  },
+  "pair": {
+    "instructions": {
+      "title": "Connect the thermostat to Wi-Fi",
+      "intro": "Homey finds thermostats that are already connected to your Wi-Fi network. If yours is not connected yet:",
+      "step_off": "Turn the thermostat off with the ⏻ button.",
+      "step_hold": "Touch and hold the ▲ button for about 10 seconds, until the Wi-Fi symbol on the display starts blinking fast.",
+      "step_app": "In the COMPUTHERM E Series app, tap \"Configuration\" and connect the thermostat to your 2.4 GHz Wi-Fi network.",
+      "step_done": "When the Wi-Fi symbol stays lit, tap Next to search for the thermostat.",
+      "note": "The thermostat only supports 2.4 GHz Wi-Fi, and it must be on the same network as Homey.",
+      "next": "Next"
+    }
   }
 }

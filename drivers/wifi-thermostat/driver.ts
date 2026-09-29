@@ -1,15 +1,68 @@
-/* eslint-disable node/no-unsupported-features/es-syntax */
-// eslint-disable-next-line strict
 import Homey from "homey";
 import { DiscoveryResultMAC } from "homey/lib/DiscoveryStrategy";
+import { discover } from "node-broadlink";
+
+// 0x4ead: [Hysen, 'HY02/HY03', 'Hysen']
+const HYSEN_DEVICE_TYPE = 20141;
+
+const BROADLINK_DISCOVERY_TIMEOUT = 2 * 1000;
+const BROADLINK_DISCOVERY_ATTEMPTS = 3;
+
+interface FoundThermostat {
+  mac: string;
+  address: string;
+}
+
+function formatMac(mac: number[]): string {
+  return mac.map((part) => part.toString(16).padStart(2, "0")).join(":");
+}
 
 class ThermostatDriver extends Homey.Driver {
+
+  _scan: Promise<FoundThermostat[]> | null = null;
 
   /**
    * onInit is called when the driver is initialized.
    */
   async onInit() {
     this.log("ThermostatDriver has been initialized");
+
+    // Homey's MAC discovery only sees devices in its ARP table, which a quiet
+    // thermostat is not. A Broadlink broadcast makes them answer, so they show up.
+    this.scanNetwork().catch(this.error);
+  }
+
+  /**
+   * Find thermostats with a Broadlink broadcast. Concurrent calls share one scan.
+   */
+  scanNetwork(): Promise<FoundThermostat[]> {
+    if (!this._scan) {
+      this._scan = this._scanNetwork().finally(() => {
+        this._scan = null;
+      });
+    }
+    return this._scan;
+  }
+
+  private async _scanNetwork(): Promise<FoundThermostat[]> {
+    const found = new Map<string, FoundThermostat>();
+
+    // A single broadcast is sometimes lost, so send a few
+    for (let attempt = 0; attempt < BROADLINK_DISCOVERY_ATTEMPTS; attempt++) {
+      const devices = await discover(BROADLINK_DISCOVERY_TIMEOUT);
+      for (const device of devices) {
+        // Every discovered device opens its own UDP socket, only the address is needed
+        device["socket"].close();
+        if (device.deviceType === HYSEN_DEVICE_TYPE) {
+          const mac = formatMac(device.mac);
+          found.set(mac, { mac, address: device.host.address });
+        }
+      }
+    }
+
+    const thermostats = [...found.values()];
+    this.log(`Broadlink scan found ${thermostats.length} thermostat(s)`, thermostats);
+    return thermostats;
   }
 
   /**
@@ -17,23 +70,30 @@ class ThermostatDriver extends Homey.Driver {
    * This should return an array with the data of devices that are available for pairing.
    */
   async onPairListDevices() {
-    const discoveryStrategy = this.getDiscoveryStrategy();
+    const found = new Map<string, FoundThermostat>();
 
-    const discoveryResults = discoveryStrategy.getDiscoveryResults();
+    try {
+      for (const thermostat of await this.scanNetwork()) {
+        found.set(thermostat.mac, thermostat);
+      }
+    } catch (error) {
+      this.error("Broadlink scan failed", error);
+    }
 
-    const devices = Object.values(discoveryResults).map((discoveryResult: DiscoveryResultMAC) => {
-      return {
-        name: "Computherm Wifi Thermostat",
-        data: {
-          id: discoveryResult.id,
-          mac: discoveryResult.mac,
-          address: discoveryResult.address,
-          lastSeen: discoveryResult.lastSeen,
-        },
-      };
-    });
+    const discoveryResults = this.getDiscoveryStrategy().getDiscoveryResults();
+    for (const discoveryResult of Object.values(discoveryResults) as DiscoveryResultMAC[]) {
+      found.set(discoveryResult.mac.toLowerCase(), { mac: discoveryResult.mac, address: discoveryResult.address });
+    }
 
-    return devices;
+    // The data id must match the MAC discovery result id (the lowercase MAC)
+    return [...found.values()].map((thermostat) => ({
+      name: "Computherm Wifi Thermostat",
+      data: {
+        id: thermostat.mac.toLowerCase(),
+        mac: thermostat.mac,
+        address: thermostat.address,
+      },
+    }));
   }
 
 }

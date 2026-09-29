@@ -1,0 +1,18 @@
+{
+  "error": {
+    "offline": "A termosztát offline állapotba került. Újracsatlakozás...",
+    "cool_not_supported": "Ez a termosztát nem támogatja a hűtést."
+  },
+  "pair": {
+    "instructions": {
+      "title": "A termosztát csatlakoztatása Wi-Fi-hez",
+      "intro": "A Homey a Wi-Fi hálózatra már csatlakoztatott termosztátokat találja meg. Ha a tiéd még nincs csatlakoztatva:",
+      "step_off": "A termosztáton a ⏻ gomb megérintésével kapcsold ki a készüléket.",
+      "step_hold": "Érintsd meg és tartsd megérintve a ▲ gombot kb. 10 másodpercig, amíg a kijelzőn a Wi-Fi szimbólum gyorsan villogni nem kezd.",
+      "step_app": "A COMPUTHERM E Series alkalmazásban érintsd meg a „Konfiguráció” ikont, és csatlakoztasd a termosztátot a 2,4 GHz-es Wi-Fi hálózatodhoz.",
+      "step_done": "Ha a Wi-Fi szimbólum folyamatosan világít, érintsd meg a Tovább gombot a termosztát kereséséhez.",
+      "note": "A termosztát csak 2,4 GHz-es Wi-Fi hálózathoz csatlakozhat, és a Homey-val azonos hálózaton kell lennie.",
+      "next": "Tovább"
+    }
+  }
+}

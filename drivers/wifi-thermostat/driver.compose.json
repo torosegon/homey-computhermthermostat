@@ -11,7 +11,7 @@
   ],
   "capabilitiesOptions": {
     "target_temperature": {
-      "step": 0.1,
+      "step": 0.5,
       "decimals": 1,
       "min": 15,
       "max": 30
@@ -30,9 +30,18 @@
   },
   "pair": [
     {
+      "id": "instructions",
+      "navigation": {
+        "next": "list_devices"
+      }
+    },
+    {
       "id": "list_devices",
       "template": "list_devices",
-      "navigation": { "next": "add_devices" }
+      "navigation": {
+        "prev": "instructions",
+        "next": "add_devices"
+      }
     },
     {
       "id": "add_devices",

@@ -1,0 +1,32 @@
+<header class="homey-header">
+  <h1 class="homey-title" data-i18n="pair.instructions.title"></h1>
+  <p class="homey-subtitle" data-i18n="pair.instructions.intro"></p>
+</header>
+
+<ol class="steps">
+  <li data-i18n="pair.instructions.step_off"></li>
+  <li data-i18n="pair.instructions.step_hold"></li>
+  <li data-i18n="pair.instructions.step_app"></li>
+  <li data-i18n="pair.instructions.step_done"></li>
+</ol>
+
+<p class="note" data-i18n="pair.instructions.note"></p>
+
+<button class="homey-button-primary-full" data-i18n="pair.instructions.next" onclick="Homey.nextView()"></button>
+
+<style>
+  .steps {
+    margin: 0 0 1em;
+    padding-left: 1.4em;
+    line-height: 1.5;
+  }
+
+  .steps li {
+    margin-bottom: 0.6em;
+  }
+
+  .note {
+    margin-bottom: 1.5em;
+    opacity: 0.7;
+  }
+</style>
