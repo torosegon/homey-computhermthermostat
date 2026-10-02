@@ -1,9 +1,6 @@
 import Homey from "homey";
 import { DiscoveryResultMAC } from "homey/lib/DiscoveryStrategy";
-import { discover } from "node-broadlink";
-
-// 0x4ead: [Hysen, 'HY02/HY03', 'Hysen']
-const HYSEN_DEVICE_TYPE = 20141;
+import { discover, HYSEN_DEVICE_TYPE } from "../../lib/broadlink";
 
 const BROADLINK_DISCOVERY_TIMEOUT = 2 * 1000;
 const BROADLINK_DISCOVERY_ATTEMPTS = 3;
@@ -11,10 +8,6 @@ const BROADLINK_DISCOVERY_ATTEMPTS = 3;
 interface FoundThermostat {
   mac: string;
   address: string;
-}
-
-function formatMac(mac: number[]): string {
-  return mac.map((part) => part.toString(16).padStart(2, "0")).join(":");
 }
 
 class ThermostatDriver extends Homey.Driver {
@@ -51,11 +44,8 @@ class ThermostatDriver extends Homey.Driver {
     for (let attempt = 0; attempt < BROADLINK_DISCOVERY_ATTEMPTS; attempt++) {
       const devices = await discover(BROADLINK_DISCOVERY_TIMEOUT);
       for (const device of devices) {
-        // Every discovered device opens its own UDP socket, only the address is needed
-        device["socket"].close();
         if (device.deviceType === HYSEN_DEVICE_TYPE) {
-          const mac = formatMac(device.mac);
-          found.set(mac, { mac, address: device.host.address });
+          found.set(device.mac, { mac: device.mac, address: device.address });
         }
       }
     }

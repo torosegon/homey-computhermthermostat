@@ -3,6 +3,7 @@
   "compilerOptions": {
     "allowJs": true,
     "outDir": ".homeybuild/",
-    "strict": false,
-  }
+    "strict": false
+  },
+  "exclude": ["node_modules", ".homeybuild", "build-test", "test"]
 }

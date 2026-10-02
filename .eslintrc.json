@@ -18,7 +18,7 @@
         "strict": "off",
         "no-undef": "off",
         "node/no-unsupported-features/es-syntax": ["error", { "ignores": ["modules"] }],
-        "node/no-missing-import": ["error", { "allowModules": ["homey"] }],
+        "node/no-missing-import": ["error", { "allowModules": ["homey"], "tryExtensions": [".ts", ".js", ".json"] }],
         "import/no-unresolved": ["error", { "ignore": ["^homey(/|$)"] }],
         "import/extensions": ["error", "ignorePackages", { "js": "never", "ts": "never" }],
         "import/no-import-module-exports": "off"

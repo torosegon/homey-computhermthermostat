@@ -1,39 +1,6 @@
 import Homey from "homey";
 import { DiscoveryResultMAC } from "homey/lib/DiscoveryStrategy";
-import { Hysen } from "node-broadlink";
-
-interface DayModel {
-  startHour: number;
-  startMinute: number;
-  temp: number;
-}
-
-export interface HysenClimateStatus {
-  remoteLock: number;
-  power: number;
-  active: number;
-  tempManual: number;
-  roomTemp: number;
-  thermostatTemp: number;
-  autoMode: number;
-  loopMode: number;
-  sensor: number;
-  osv: number;
-  dif: number;
-  svh: number;
-  svl: number;
-  roomTempAdj: number;
-  fre: number;
-  poweron: number;
-  unknown: number;
-  externalTemp: number;
-  hour: number;
-  min: number;
-  sec: number;
-  dayofweek: number;
-  weekDay: DayModel[];
-  weekEnd: DayModel[];
-}
+import { HysenClimateStatus, HysenThermostat } from "../../lib/broadlink";
 
 type ThermostatMode = "auto" | "heat" | "cool" | "off";
 
@@ -46,26 +13,9 @@ interface ThermostatDriver {
   scanNetwork(): Promise<ThermostatAddress[]>;
 }
 
-// 0x4ead: [Hysen, 'HY02/HY03', 'Hysen'],
-// https://github.com/ThomasTavernier/node-broadlink/blob/main/src/index.ts#L151C1
-const HYSEN_DEVICE_TYPE = 20141;
-
 const STATUS_POLL_INTERVAL = 60 * 1000;
 
-// node-broadlink has no request timeout, a lost UDP packet would hang forever
 const REQUEST_TIMEOUT = 10 * 1000;
-
-function convertMacToDecimal(mac: string): number[] {
-  return mac.split(":").map((part) => parseInt(part, 16));
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Request timed out after ${ms} ms`)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
 
 function statusToThermostatMode(status: HysenClimateStatus): ThermostatMode {
   if (status.power !== 1) return "off";
@@ -79,7 +29,7 @@ class ThermostatDevice extends Homey.Device {
    *
    * @private
    */
-  _hysenDevice: Hysen | null = null;
+  _hysenDevice: HysenThermostat | null = null;
 
   /**
    * Where the thermostat was last seen, used to (re)connect
@@ -87,13 +37,18 @@ class ThermostatDevice extends Homey.Device {
   _target: ThermostatAddress | null = null;
 
   /**
-   * Connection in progress, so concurrent connects share one socket
+   * Reconnect in progress, only one runs at a time
    */
-  _connecting: Promise<void> | null = null;
+  _reconnecting: Promise<void> | null = null;
 
   /**
-   * Requests are sent one at a time: node-broadlink matches the response to
-   * whichever request is waiting for the next UDP message.
+   * The target changed while a reconnect was running
+   */
+  _reconnectAgain = false;
+
+  /**
+   * Requests are sent one at a time: the thermostat answers one request at a
+   * time, and multi-step actions (read status, then write) must not interleave.
    */
   _requestQueue: Promise<unknown> = Promise.resolve();
 
@@ -126,15 +81,11 @@ class ThermostatDevice extends Homey.Device {
     this.log("ThermostatDevice is available");
     this.log(`Device ID=${discoveryResult.id} MAC=${discoveryResult.mac} address=${discoveryResult.address}`);
 
-    const alreadyConnected = this._hysenDevice && this._target?.address === discoveryResult.address;
     this._target = discoveryResult;
-    if (!alreadyConnected) {
-      await this._connect();
-    }
+    if (this._hysenDevice?.address === discoveryResult.address) return;
 
-    const status = await this._refreshStatus();
+    await this._reconnect();
     this.log(" settings (after init) =   ", this.getSettings());
-    this.log(" status =   ", status);
   }
 
   async onDiscoveryAddressChanged(discoveryResult: DiscoveryResultMAC) {
@@ -236,16 +187,7 @@ class ThermostatDevice extends Homey.Device {
   }
 
   // Custom actions
-  private _connect(): Promise<void> {
-    if (!this._connecting) {
-      this._connecting = this._createConnection().finally(() => {
-        this._connecting = null;
-      });
-    }
-    return this._connecting;
-  }
-
-  private async _createConnection() {
+  private async _connect() {
     const discoveryResult = this._target;
     if (!discoveryResult) {
       throw new Error(this.homey.__("error.offline"));
@@ -253,25 +195,11 @@ class ThermostatDevice extends Homey.Device {
 
     this._disconnect();
 
-    const convertedMac: number[] = convertMacToDecimal(discoveryResult.mac);
-    this.log(" convertedMac", convertedMac);
-
-    const hysenDevice = new Hysen(
-      {
-        address: discoveryResult.address,
-        family: "IPv4",
-        port: 80,
-        // Size copied from "node-broadlink" test data
-        size: 128,
-      },
-      convertedMac,
-      HYSEN_DEVICE_TYPE,
-    );
-
+    const hysenDevice = new HysenThermostat(discoveryResult.address, discoveryResult.mac, REQUEST_TIMEOUT);
     try {
-      await withTimeout(hysenDevice.auth(), REQUEST_TIMEOUT);
+      await hysenDevice.auth();
     } catch (error) {
-      hysenDevice["socket"].close();
+      hysenDevice.close();
       throw error;
     }
     this.log(" authed");
@@ -281,26 +209,44 @@ class ThermostatDevice extends Homey.Device {
   }
 
   /**
-   * Close the UDP socket of the current connection (node-broadlink never closes it)
+   * Close the UDP socket of the current connection
    */
   private _disconnect() {
     if (this._hysenDevice) {
-      try {
-        this._hysenDevice["socket"].close();
-      } catch (error) {
-        this.error("Failed to close socket", error);
-      }
+      this._hysenDevice.close();
       this._hysenDevice = null;
     }
   }
 
-  private async _reconnect() {
+  /**
+   * Connect to the current target. Only one reconnect runs at a time; if the
+   * target changes meanwhile, it runs again for the new target.
+   */
+  private _reconnect(): Promise<void> {
+    if (this._reconnecting) {
+      this._reconnectAgain = true;
+      return this._reconnecting;
+    }
+
+    this._reconnecting = (async () => {
+      do {
+        this._reconnectAgain = false;
+        await this._tryReconnect();
+      } while (this._reconnectAgain && this._hysenDevice?.address !== this._target?.address);
+    })().finally(() => {
+      this._reconnecting = null;
+    });
+    return this._reconnecting;
+  }
+
+  private async _tryReconnect() {
+    const failedAddress = this._target?.address;
     try {
       try {
         await this._connect();
       } catch (error) {
         // The thermostat may have a new IP address, look for it on the network
-        if (!await this._findNewAddress()) throw error;
+        if (!await this._findNewAddress(failedAddress)) throw error;
         await this._connect();
       }
       await this._refreshStatus();
@@ -311,13 +257,14 @@ class ThermostatDevice extends Homey.Device {
   }
 
   /**
-   * Look for this thermostat with a Broadlink scan, returns true if its address changed
+   * Look for this thermostat with a Broadlink scan, returns true if it is at
+   * another address than the one that failed
    */
-  private async _findNewAddress(): Promise<boolean> {
+  private async _findNewAddress(failedAddress: string | undefined): Promise<boolean> {
     const { id } = this.getData();
     const thermostats = await (this.driver as unknown as ThermostatDriver).scanNetwork();
     const found = thermostats.find((thermostat) => thermostat.mac.toLowerCase() === id);
-    if (!found || found.address === this._target?.address) return false;
+    if (!found || found.address === failedAddress) return false;
 
     this.log(`Thermostat found at new address ${found.address}`);
     this._target = found;
@@ -328,14 +275,14 @@ class ThermostatDevice extends Homey.Device {
    * Run requests against the thermostat one at a time, with a timeout.
    * A timed out connection is dropped, the status timer reconnects it.
    */
-  private _run<T>(action: (hysenDevice: Hysen) => Promise<T>): Promise<T> {
+  private _run<T>(action: (hysenDevice: HysenThermostat) => Promise<T>): Promise<T> {
     const result = this._requestQueue.then(async () => {
       const hysenDevice = this._hysenDevice;
       if (!hysenDevice) {
         throw new Error(this.homey.__("error.offline"));
       }
       try {
-        return await withTimeout(action(hysenDevice), REQUEST_TIMEOUT);
+        return await action(hysenDevice);
       } catch (error) {
         if (this._hysenDevice === hysenDevice) {
           this._disconnect();
@@ -457,8 +404,7 @@ class ThermostatDevice extends Homey.Device {
         await hysenDevice.setPower(1, status.remoteLock);
       }
 
-      // setMode writes (loopMode + 1) into the same nibble getFullStatus reads
-      // loopMode from, so pass loopMode - 1 to keep the current loop mode.
+      // Pass loopMode - 1 to keep the current loop mode, see setMode
       await hysenDevice.setMode(mode === "auto" ? 1 : 0, status.loopMode - 1, status.sensor);
     });
   }
